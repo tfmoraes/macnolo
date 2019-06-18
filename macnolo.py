@@ -5,6 +5,8 @@ import shutil
 import sys
 import tarfile
 from urllib import request
+import plistlib
+import subprocess
 
 CACHE_FOLDER = pathlib.Path(".cache")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -14,6 +16,17 @@ def calc_hash(filename):
     with open(filename, "r+b") as f:
         h = hashlib.sha256(f.read())
         return h.hexdigest()
+
+
+def get_shared_lib_deps(shared_lib_filename):
+    output = subprocess.check_output(("otool", "-L", str(shared_lib_filename)))
+    libs = output.split(b'\n')
+    return [i.strip().split()[0].decode('utf8') for i in libs if i.startswith(b'\t')]
+
+
+def change_libs_path(lib, old_path, new_path):
+    output = subprocess.check_output(("install_name_tool", "-change", old_path, new_path, lib))
+    print(output)
 
 
 def download_and_check(url, sha):
@@ -34,13 +47,46 @@ def download_and_check(url, sha):
 
 
 def extract_files(filename, dest):
+    print("Extracting", filename)
+    extracted_files = []
     with tarfile.open(filename) as tf:
         for ti in tf:
-            print(ti.name)
             dest_name = dest.joinpath('/'.join(ti.name.split("/")[2:]))
             if ti.isdir():
                 dest_name.mkdir(parents=True, exist_ok=True)
             tf._extract_member(ti, str(dest_name), False)
+            extracted_files.append(dest_name)
+    return extracted_files
+
+
+def create_app_info(app_folder, app_name, version, icon):
+    print("Generating info.plist")
+    info = {
+        "CFBundleIconFile": "icon.icns",
+        "CFBundleName": app_name,
+        "CFBundleExecutable": "run.sh",
+        "CFBundleIdentifier": app_name,
+        "CFBundleVersion": version,
+        "CFBundleGetInfoString": "",
+        "CFBundleShortVersionString": version,
+        "NSPrincipalClass": "NSApplication",
+        "NSMainNibFile": "MainMenu"
+    }
+    info_path = app_folder.joinpath("Contents/Info.plist")
+    with info_path.open('wb') as fp:
+        plistlib.dump(info, fp)
+
+
+def create_script_launcher(app_folder):
+    exec_file = app_folder.joinpath("Contents/MacOS/run.sh")
+    with exec_file.open("w") as f:
+        f.write(
+"""
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
+echo "Manolo"
+""")
+    exec_file.chmod(0o777)
 
 
 def main():
@@ -53,6 +99,17 @@ def main():
     packages = dict_json["packages"]
     ignore_packages = dict_json["ignore_packages"]
     mac_version = dict_json["mac_version"]
+
+    app_folder = pathlib.Path(app_name + '.app')
+    libs_folder = app_folder.joinpath("Contents/Resources/libs/")
+    libs_folder.mkdir(parents=True, exist_ok=True)
+
+    binary_folder = app_folder.joinpath("Contents/MacOS")
+    binary_folder.mkdir(parents=True, exist_ok=True)
+
+    create_app_info(app_folder, app_name, version, "manolo.icsn")
+    create_script_launcher(app_folder)
+
     downloaded = []
     package_files = []
     while packages:
@@ -71,13 +128,22 @@ def main():
                 packages.append(dependency)
         downloaded.append(package)
 
-    app_folder = pathlib.Path(app_name + '.app')
-    libs_folder = app_folder.joinpath("Contents/Resources/libs/")
-    libs_folder.mkdir(parents=True, exist_ok=True)
-
+    extracted_files = []
     for package in package_files:
-        extract_files(package, libs_folder)
+        extracted_files.extend(extract_files(package, libs_folder))
 
+    path_by_file = {}
+    for extracted_file in extracted_files:
+        path_by_file[extracted_file.parts[-1]] = extracted_file
+
+    for package_file in extracted_files:
+        extension = package_file.suffixes
+        if package_file.is_file() and ('.so' in extension or '.dylib' in extension or len(extension) == 0):
+            libs = get_shared_lib_deps(package_file)
+            for lib in libs:
+                lib_id = lib.split("/")[-1] 
+                if lib_id in path_by_file:
+                    change_libs_path(package_file, lib, path_by_file[lib_id])
 
 if __name__ == "__main__":
     main()
