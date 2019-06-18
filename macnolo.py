@@ -71,8 +71,8 @@ def main():
                 packages.append(dependency)
         downloaded.append(package)
 
-    app_folder = pathlib.Path(app_name)
-    libs_folder = app_folder.joinpath("libs")
+    app_folder = pathlib.Path(app_name + '.app')
+    libs_folder = app_folder.joinpath("Contents/Resources/libs/")
     libs_folder.mkdir(parents=True, exist_ok=True)
 
     for package in package_files:
