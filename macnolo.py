@@ -37,10 +37,10 @@ def extract_files(filename, dest):
     with tarfile.open(filename) as tf:
         for ti in tf:
             print(ti.name)
-            dest_name = str(dest.joinpath('/'.join(ti.name.split("/")[2:])))
+            dest_name = dest.joinpath('/'.join(ti.name.split("/")[2:]))
             if ti.isdir():
                 dest_name.mkdir(parents=True, exist_ok=True)
-            tf._extract_member(ti, dest_name)
+            tf._extract_member(ti, str(dest_name), False)
 
 
 def main():
