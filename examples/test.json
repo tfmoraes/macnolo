@@ -1,0 +1,7 @@
+{
+    "app_name": "InVesalius",
+    "version": "3.1.99994",
+    "packages": ["python", "vtk", "gdcm"],
+    "ignore_packages": ["boost", "python@2", "gcc", "qt", "pyqt"],
+    "mac_version": "high_sierra"
+}
