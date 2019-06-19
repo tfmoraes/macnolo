@@ -8,6 +8,8 @@ from urllib import request
 import plistlib
 import subprocess
 
+from macholib import MachO
+
 CACHE_FOLDER = pathlib.Path(".cache")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
 
@@ -16,6 +18,11 @@ def calc_hash(filename):
     with open(filename, "r+b") as f:
         h = hashlib.sha256(f.read())
         return h.hexdigest()
+
+
+def relative_to(path, rel):
+    parts = path.parts
+    return pathlib.Path('@executable_path/..').joinpath('/'.join(parts[2:]))
 
 
 def get_shared_lib_deps(shared_lib_filename):
@@ -134,16 +141,31 @@ def main():
 
     path_by_file = {}
     for extracted_file in extracted_files:
-        path_by_file[extracted_file.parts[-1]] = extracted_file
+        path_by_file[extracted_file.parts[-1]] = relative_to(extracted_file, '')
+
+    def change_func(path):
+        filename = path.split("/")[-1]
+        return str(path_by_file.get(filename, path))
 
     for package_file in extracted_files:
         extension = package_file.suffixes
         if package_file.is_file() and ('.so' in extension or '.dylib' in extension or len(extension) == 0):
-            libs = get_shared_lib_deps(package_file)
-            for lib in libs:
-                lib_id = lib.split("/")[-1] 
-                if lib_id in path_by_file:
-                    change_libs_path(package_file, lib, path_by_file[lib_id])
+            try:
+                # print(package_file)
+                macho = MachO.MachO(str(package_file))
+            except Exception:
+                # Not lib
+                continue
+            rewrote = False
+            for header in macho.headers:
+                if macho.rewriteLoadCommands(change_func):
+                    rewrote = True
+            
+            if rewrote:
+                print("rewrite", package_file)
+                with package_file.open("rb+") as f:
+                    f.seek(0)
+                    macho.write(f)
 
 if __name__ == "__main__":
     main()
