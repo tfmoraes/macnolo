@@ -69,12 +69,14 @@ def extract_files(filename, dest):
 def create_app_info(app_folder, app_name, version, icon):
     print("Generating info.plist")
     info = {
+        "CFBundlePackageType": "APPL",
+        "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleIconFile": "icon.icns",
         "CFBundleName": app_name,
         "CFBundleExecutable": "run.sh",
         "CFBundleIdentifier": app_name,
         "CFBundleVersion": version,
-        "CFBundleGetInfoString": "",
+        "CFBundleGetInfoString": "123",
         "CFBundleShortVersionString": version,
         "NSPrincipalClass": "NSApplication",
         "NSMainNibFile": "MainMenu"
@@ -88,10 +90,10 @@ def create_script_launcher(app_folder):
     exec_file = app_folder.joinpath("Contents/MacOS/run.sh")
     with exec_file.open("w") as f:
         f.write(
-"""
-#!/usr/bin/env bash
+"""#!/usr/bin/env bash
 cd "$(dirname "$0")"
-echo "Manolo"
+echo "Manolo" > /tmp/test.txt
+../Resources/libs/bin/python3 teste.py
 """)
     exec_file.chmod(0o777)
 
@@ -117,6 +119,8 @@ def main():
     create_app_info(app_folder, app_name, version, "manolo.icsn")
     create_script_launcher(app_folder)
 
+    shutil.copy2("teste.py", str(binary_folder))
+
     downloaded = []
     package_files = []
     while packages:
@@ -141,15 +145,15 @@ def main():
 
     path_by_file = {}
     for extracted_file in extracted_files:
-        path_by_file[extracted_file.parts[-1]] = relative_to(extracted_file, '')
+        path_by_file['/'.join(extracted_file.parts[-2:])] = relative_to(extracted_file, '')
 
     def change_func(path):
-        filename = path.split("/")[-1]
+        filename = '/'.join(path.split("/")[-2:])
         return str(path_by_file.get(filename, path))
 
     for package_file in extracted_files:
         extension = package_file.suffixes
-        if package_file.is_file() and ('.so' in extension or '.dylib' in extension or len(extension) == 0):
+        if package_file.is_file():
             try:
                 # print(package_file)
                 macho = MachO.MachO(str(package_file))
