@@ -1,17 +1,45 @@
 import hashlib
 import json
+import os
 import pathlib
+import plistlib
 import shutil
+import subprocess
 import sys
 import tarfile
+import tempfile
+from string import Template
 from urllib import request
-import plistlib
-import subprocess
 
 from macholib import MachO
 
 CACHE_FOLDER = pathlib.Path(".cache")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
+
+launcher_template = Template(
+"""
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h> /* for fork */
+#include <sys/types.h> /* for pid_t */
+#include <sys/wait.h> /* for wait */
+
+int main()
+{
+    /*Spawn a child to run the program.*/
+    pid_t pid=fork();
+    if (pid==0) { /* child process */
+        static char *argv[]={"python3", "$script_path", NULL};
+        execv("../Resources/libs/bin/python3", argv);
+        exit(127); /* only if execv fails */
+    }
+    else { /* pid!=0; parent process */
+        waitpid(pid,0,0); /* wait for child to exit */
+    }
+    return 0;
+}
+"""
+)
 
 
 def calc_hash(filename):
@@ -21,18 +49,20 @@ def calc_hash(filename):
 
 
 def relative_to(path, rel):
-    parts = path.parts
-    return pathlib.Path('@executable_path/..').joinpath('/'.join(parts[2:]))
+    path = pathlib.Path(path)
+    return os.path.relpath(str(path.parent), str(rel)) + "/" + path.parts[-1]
 
 
 def get_shared_lib_deps(shared_lib_filename):
     output = subprocess.check_output(("otool", "-L", str(shared_lib_filename)))
-    libs = output.split(b'\n')
-    return [i.strip().split()[0].decode('utf8') for i in libs if i.startswith(b'\t')]
+    libs = output.split(b"\n")
+    return [i.strip().split()[0].decode("utf8") for i in libs if i.startswith(b"\t")]
 
 
 def change_libs_path(lib, old_path, new_path):
-    output = subprocess.check_output(("install_name_tool", "-change", old_path, new_path, lib))
+    output = subprocess.check_output(
+        ("install_name_tool", "-change", old_path, new_path, lib)
+    )
     print(output)
 
 
@@ -58,7 +88,7 @@ def extract_files(filename, dest):
     extracted_files = []
     with tarfile.open(filename) as tf:
         for ti in tf:
-            dest_name = dest.joinpath('/'.join(ti.name.split("/")[2:]))
+            dest_name = dest.joinpath("/".join(ti.name.split("/")[2:]))
             if ti.isdir():
                 dest_name.mkdir(parents=True, exist_ok=True)
             tf._extract_member(ti, str(dest_name), False)
@@ -73,29 +103,27 @@ def create_app_info(app_folder, app_name, version, icon):
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleIconFile": "icon.icns",
         "CFBundleName": app_name,
-        "CFBundleExecutable": "run.sh",
+        "CFBundleExecutable": "run",
         "CFBundleIdentifier": app_name,
         "CFBundleVersion": version,
         "CFBundleGetInfoString": "123",
         "CFBundleShortVersionString": version,
         "NSPrincipalClass": "NSApplication",
-        "NSMainNibFile": "MainMenu"
+        "NSMainNibFile": "MainMenu",
     }
     info_path = app_folder.joinpath("Contents/Info.plist")
-    with info_path.open('wb') as fp:
+    with info_path.open("wb") as fp:
         plistlib.dump(info, fp)
 
 
-def create_script_launcher(app_folder):
-    exec_file = app_folder.joinpath("Contents/MacOS/run.sh")
-    with exec_file.open("w") as f:
-        f.write(
-"""#!/usr/bin/env bash
-cd "$(dirname "$0")"
-echo "Manolo" > /tmp/test.txt
-../Resources/libs/bin/python3 teste.py
-""")
-    exec_file.chmod(0o777)
+def create_launcher(app_folder, script_path):
+    print("Creating lancher")
+    exec_file = app_folder.joinpath("Contents/MacOS/run")
+    c_temp_file = tempfile.mktemp(suffix=".c")
+    with open(c_temp_file, "w") as f:
+        f.write(launcher_template.substitute(script_path=script_path))
+    print("Compiling launcher")
+    print(subprocess.check_call(["clang", c_temp_file, "-o", exec_file]))
 
 
 def main():
@@ -109,7 +137,7 @@ def main():
     ignore_packages = dict_json["ignore_packages"]
     mac_version = dict_json["mac_version"]
 
-    app_folder = pathlib.Path(app_name + '.app')
+    app_folder = pathlib.Path(app_name + ".app")
     libs_folder = app_folder.joinpath("Contents/Resources/libs/")
     libs_folder.mkdir(parents=True, exist_ok=True)
 
@@ -117,9 +145,15 @@ def main():
     binary_folder.mkdir(parents=True, exist_ok=True)
 
     create_app_info(app_folder, app_name, version, "manolo.icsn")
-    create_script_launcher(app_folder)
 
-    shutil.copy2("teste.py", str(binary_folder))
+    application_folder = app_folder.joinpath("Contents/Resources/app/")
+    application_folder.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2("teste.py", str(application_folder))
+
+    create_launcher(
+        app_folder, relative_to(application_folder.joinpath("teste.py"), binary_folder)
+    )
 
     downloaded = []
     package_files = []
@@ -135,7 +169,11 @@ def main():
         bottle_hash = package_info["bottle"]["stable"]["files"][mac_version]["sha256"]
         package_files.append(download_and_check(bottle_url, bottle_hash))
         for dependency in dependencies:
-            if dependency not in ignore_packages and dependency not in packages and dependency not in downloaded:
+            if (
+                dependency not in ignore_packages
+                and dependency not in packages
+                and dependency not in downloaded
+            ):
                 packages.append(dependency)
         downloaded.append(package)
 
@@ -145,11 +183,16 @@ def main():
 
     path_by_file = {}
     for extracted_file in extracted_files:
-        path_by_file['/'.join(extracted_file.parts[-2:])] = relative_to(extracted_file, '')
+        path_by_file[
+            "/".join(extracted_file.parts[-2:])
+        ] = extracted_file
 
     def change_func(path):
-        filename = '/'.join(path.split("/")[-2:])
-        return str(path_by_file.get(filename, path))
+        filename = "/".join(path.split("/")[-2:])
+        new_path = str(path_by_file.get(filename, path))
+        if new_path == path:
+            return new_path
+        return "@loader_path/" + relative_to(new_path, package_file.parent)
 
     for package_file in extracted_files:
         extension = package_file.suffixes
@@ -164,12 +207,13 @@ def main():
             for header in macho.headers:
                 if macho.rewriteLoadCommands(change_func):
                     rewrote = True
-            
+
             if rewrote:
                 print("rewrite", package_file)
                 with package_file.open("rb+") as f:
                     f.seek(0)
                     macho.write(f)
+
 
 if __name__ == "__main__":
     main()
