@@ -1,9 +1,12 @@
+import functools
 import hashlib
 import json
+import operator
 import os
 import pathlib
 import plistlib
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -13,11 +16,63 @@ from urllib import request
 
 from macholib import MachO
 
+
+def chmod(location, description):
+    """chmod(location, description) --> None
+    Change the access permissions of file, using a symbolic description
+    of the mode, similar to the format of the shell command chmod.
+    The format of description is
+        * an optional letter in o, g, u, a (no letter means a)
+        * an operator in +, -, =
+        * a sequence of letters in r, w, x, or a single letter in o, g, u
+    Example:
+        chmod(myfile, "u+x")    # make the file executable for it's owner.
+        chmod(myfile, "o-rwx")  # remove all permissions for all users not in the group. 
+    See also the man page of chmod.
+    """
+    if chmod.regex is None:
+        import re
+
+        chmod.regex = re.compile(
+            r"(?P<who>[uoga]?)(?P<op>[+\-=])(?P<value>[ugo]|[rwx]*)"
+        )
+    mo = chmod.regex.match(description)
+    who, op, value = mo.group("who"), mo.group("op"), mo.group("value")
+    if not who:
+        who = "a"
+    mode = os.stat(location)[stat.ST_MODE]
+    if value in ("o", "g", "u"):
+        mask = ors((stat_bit(who, z) for z in "rwx" if (mode & stat_bit(value, z))))
+    else:
+        mask = ors((stat_bit(who, z) for z in value))
+    if op == "=":
+        mode &= ~ors((stat_bit(who, z) for z in "rwx"))
+    mode = (mode & ~mask) if (op == "-") else (mode | mask)
+    os.chmod(location, mode)
+
+
+chmod.regex = None
+# Helper functions
+def stat_bit(who, letter):
+    if who == "a":
+        return stat_bit("o", letter) | stat_bit("g", letter) | stat_bit("u", letter)
+    return getattr(stat, "S_I%s%s" % (letter.upper(), stat_bit.prefix[who]))
+
+
+stat_bit.prefix = dict(u="USR", g="GRP", o="OTH")
+
+
+def ors(sequence, initial=0):
+    return functools.reduce(operator.__or__, sequence, initial)
+
+
+# Test code
+
 CACHE_FOLDER = pathlib.Path(".cache")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
 
 launcher_template = Template(
-"""
+    """
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h> /* for fork */
@@ -91,7 +146,7 @@ def extract_files(filename, dest):
             dest_name = dest.joinpath("/".join(ti.name.split("/")[2:]))
             if ti.isdir():
                 dest_name.mkdir(parents=True, exist_ok=True)
-            tf._extract_member(ti, str(dest_name), False)
+            tf._extract_member(ti, str(dest_name), not ti.isdir())
             extracted_files.append(dest_name)
     return extracted_files
 
@@ -181,18 +236,26 @@ def main():
     for package in package_files:
         extracted_files.extend(extract_files(package, libs_folder))
 
+    if "python" in downloaded:
+        site_packages = libs_folder.joinpath("lib/python3.7/site-packages")
+        link_site_packages = libs_folder.joinpath("Frameworks/Python.framework/Versions/3.7/lib/python3.7/site-packages")
+        os.symlink(relative_to(site_packages, link_site_packages.parent), link_site_packages)
+
     path_by_file = {}
     for extracted_file in extracted_files:
-        path_by_file[
-            "/".join(extracted_file.parts[-2:])
-        ] = extracted_file
+        path_by_file["/".join(extracted_file.parts[-3:])] = extracted_file
 
     def change_func(path):
-        filename = "/".join(path.split("/")[-2:])
-        new_path = str(path_by_file.get(filename, path))
-        if new_path == path:
-            return new_path
-        return "@loader_path/" + relative_to(new_path, package_file.parent)
+        if path.startswith("@@HOMEBREW_CELLAR@@"):
+            path = libs_folder.joinpath("/".join(path.split("/")[3:]))
+            if str(package_file).endswith(".so") or str(package_file).endswith(
+                ".dylib"
+            ):
+                return "@loader_path/" + relative_to(path, package_file.parent)
+            else:
+                return "@executable_path/" + relative_to(path, package_file.parent)
+        else:
+            return path
 
     for package_file in extracted_files:
         extension = package_file.suffixes
@@ -209,7 +272,8 @@ def main():
                     rewrote = True
 
             if rewrote:
-                print("rewrite", package_file)
+                # print("rewrite", package_file)
+                chmod(str(package_file), "u+w")
                 with package_file.open("rb+") as f:
                     f.seek(0)
                     macho.write(f)
