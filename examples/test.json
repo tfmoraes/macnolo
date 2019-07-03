@@ -3,5 +3,10 @@
     "version": "3.1.99994",
     "packages": ["python", "vtk", "gdcm"],
     "ignore_packages": ["boost", "python@2", "gcc", "pyqt", "little-cms2"],
-    "mac_version": "high_sierra"
+    "mac_version": "high_sierra",
+    "app_package": {
+        "type": "file",
+        "path": "teste.py",
+        "start_script": "teste.py"
+    }
 }

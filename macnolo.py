@@ -84,6 +84,9 @@ int main()
     /*Spawn a child to run the program.*/
     pid_t pid=fork();
     if (pid==0) { /* child process */
+        char cwd[1024];
+        getcwd(cwd, sizeof(cwd));
+        printf("Current working dir: %s\\n", cwd);
         static char *argv[]={"python3", "$script_path", NULL};
         execv("../Resources/libs/bin/python3", argv);
         exit(127); /* only if execv fails */
@@ -121,11 +124,11 @@ def change_libs_path(lib, old_path, new_path):
     print(output)
 
 
-def download_and_check(url, sha):
+def download_and_check(url, sha=None):
     filename = url.split("/")[-1]
     filepath = CACHE_FOLDER.joinpath(filename)
     if filepath.exists():
-        if calc_hash(filepath) == sha:
+        if sha is None or calc_hash(filepath) == sha:
             print("Already downloaded")
             return filepath
         else:
@@ -138,12 +141,12 @@ def download_and_check(url, sha):
     return filepath
 
 
-def extract_files(filename, dest):
+def extract_files(filename, dest, skip_path=2):
     print("Extracting", filename)
     extracted_files = []
     with tarfile.open(filename) as tf:
         for ti in tf:
-            dest_name = dest.joinpath("/".join(ti.name.split("/")[2:]))
+            dest_name = dest.joinpath("/".join(ti.name.split("/")[skip_path:]))
             if ti.isdir():
                 dest_name.mkdir(parents=True, exist_ok=True)
             tf._extract_member(ti, str(dest_name), not ti.isdir())
@@ -175,6 +178,7 @@ def create_launcher(app_folder, script_path):
     print("Creating lancher")
     exec_file = app_folder.joinpath("Contents/MacOS/run")
     c_temp_file = tempfile.mktemp(suffix=".c")
+    print("\t", c_temp_file)
     with open(c_temp_file, "w") as f:
         f.write(launcher_template.substitute(script_path=script_path))
     print("Compiling launcher")
@@ -182,7 +186,8 @@ def create_launcher(app_folder, script_path):
 
 
 def main():
-    json_fname = sys.argv[1]
+    json_fname = pathlib.Path(sys.argv[1])
+    base_path = json_fname.parent
     with open(json_fname) as json_input:
         dict_json = json.load(json_input)
 
@@ -191,6 +196,13 @@ def main():
     packages = dict_json["packages"]
     ignore_packages = dict_json["ignore_packages"]
     mac_version = dict_json["mac_version"]
+    package_type = dict_json["app_package"]["type"]
+    if package_type == package_type:
+        package_path = base_path.joinpath(dict_json["app_package"]["path"])
+    else:
+        package_url = dict_json["app_package"]["url"]
+        package_path = download_and_check(package_url)
+    start_script = dict_json["app_package"]["start_script"]
 
     app_folder = pathlib.Path(app_name + ".app")
     libs_folder = app_folder.joinpath("Contents/Resources/libs/")
@@ -204,10 +216,13 @@ def main():
     application_folder = app_folder.joinpath("Contents/Resources/app/")
     application_folder.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2("teste.py", str(application_folder))
+    if package_type == "file":
+        shutil.copy2(package_path, str(application_folder))
+    else:
+        extract_files(package_path, application_folder)
 
     create_launcher(
-        app_folder, relative_to(application_folder.joinpath("teste.py"), binary_folder)
+        app_folder, relative_to(application_folder.joinpath(start_script), binary_folder)
     )
 
     downloaded = []
@@ -246,16 +261,10 @@ def main():
         path_by_file["/".join(extracted_file.parts[-3:])] = extracted_file
 
     def change_func(path):
-        if path.startswith("@@HOMEBREW_CELLAR@@"):
-            path = libs_folder.joinpath("/".join(path.split("/")[3:]))
-            if str(package_file).endswith(".so") or str(package_file).endswith(
-                ".dylib"
-            ):
-                return "@loader_path/" + relative_to(path, package_file.parent)
-            else:
-                return "@executable_path/" + relative_to(path, package_file.parent)
-        else:
+        new_path = path_by_file.get("/".join(path.split("/")[-3:]), path)
+        if path == new_path:
             return path
+        return "@loader_path/" + relative_to(new_path, package_file.parent)
 
     for package_file in extracted_files:
         extension = package_file.suffixes
@@ -272,7 +281,7 @@ def main():
                     rewrote = True
 
             if rewrote:
-                # print("rewrite", package_file)
+                print("rewriting", package_file)
                 chmod(str(package_file), "u+w")
                 with package_file.open("rb+") as f:
                     f.seek(0)
