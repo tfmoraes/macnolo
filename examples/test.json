@@ -1,6 +1,7 @@
 {
     "app_name": "InVesalius",
     "version": "3.1.99994",
+    "icon": "test.icns",
     "packages": ["python", "vtk", "gdcm"],
     "ignore_packages": ["boost", "python@2", "gcc", "pyqt", "little-cms2"],
     "mac_version": "high_sierra",

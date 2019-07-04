@@ -17,57 +17,6 @@ from urllib import request
 from macholib import MachO
 
 
-def chmod(location, description):
-    """chmod(location, description) --> None
-    Change the access permissions of file, using a symbolic description
-    of the mode, similar to the format of the shell command chmod.
-    The format of description is
-        * an optional letter in o, g, u, a (no letter means a)
-        * an operator in +, -, =
-        * a sequence of letters in r, w, x, or a single letter in o, g, u
-    Example:
-        chmod(myfile, "u+x")    # make the file executable for it's owner.
-        chmod(myfile, "o-rwx")  # remove all permissions for all users not in the group. 
-    See also the man page of chmod.
-    """
-    if chmod.regex is None:
-        import re
-
-        chmod.regex = re.compile(
-            r"(?P<who>[uoga]?)(?P<op>[+\-=])(?P<value>[ugo]|[rwx]*)"
-        )
-    mo = chmod.regex.match(description)
-    who, op, value = mo.group("who"), mo.group("op"), mo.group("value")
-    if not who:
-        who = "a"
-    mode = os.stat(location)[stat.ST_MODE]
-    if value in ("o", "g", "u"):
-        mask = ors((stat_bit(who, z) for z in "rwx" if (mode & stat_bit(value, z))))
-    else:
-        mask = ors((stat_bit(who, z) for z in value))
-    if op == "=":
-        mode &= ~ors((stat_bit(who, z) for z in "rwx"))
-    mode = (mode & ~mask) if (op == "-") else (mode | mask)
-    os.chmod(location, mode)
-
-
-chmod.regex = None
-# Helper functions
-def stat_bit(who, letter):
-    if who == "a":
-        return stat_bit("o", letter) | stat_bit("g", letter) | stat_bit("u", letter)
-    return getattr(stat, "S_I%s%s" % (letter.upper(), stat_bit.prefix[who]))
-
-
-stat_bit.prefix = dict(u="USR", g="GRP", o="OTH")
-
-
-def ors(sequence, initial=0):
-    return functools.reduce(operator.__or__, sequence, initial)
-
-
-# Test code
-
 CACHE_FOLDER = pathlib.Path(".cache")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
 
@@ -200,6 +149,7 @@ def main():
 
     app_name = dict_json["app_name"]
     version = dict_json["version"]
+    icon = dict_json["icon"]
     packages = dict_json["packages"]
     ignore_packages = dict_json["ignore_packages"]
     mac_version = dict_json["mac_version"]
@@ -211,18 +161,30 @@ def main():
         package_path = download_and_check(package_url)
     start_script = dict_json["app_package"]["start_script"]
 
+
+    # Creating folders
     app_folder = pathlib.Path(app_name + ".app")
-    libs_folder = app_folder.joinpath("Contents/Resources/libs/")
-    libs_folder.mkdir(parents=True, exist_ok=True)
+    app_folder.mkdir(parents=True, exist_ok=True)
+
+    resources_folder = app_folder.joinpath("Contents/Resources")
+    resources_folder.mkdir(parents=True, exist_ok=True)
 
     binary_folder = app_folder.joinpath("Contents/MacOS")
     binary_folder.mkdir(parents=True, exist_ok=True)
 
-    create_app_info(app_folder, app_name, version, "manolo.icsn")
+    libs_folder = resources_folder.joinpath("libs")
+    libs_folder.mkdir(parents=True, exist_ok=True)
 
-    application_folder = app_folder.joinpath("Contents/Resources/app/")
+    application_folder = resources_folder.joinpath("app")
     application_folder.mkdir(parents=True, exist_ok=True)
 
+    # Copying icon in the package
+    shutil.copy2(base_path.joinpath(icon), resources_folder)
+    
+    # Creating Info.plist file
+    create_app_info(app_folder, app_name, version, icon)
+
+    # Copying or extracting app files inside the package
     if package_type == "file":
         shutil.copy2(package_path, str(application_folder))
     else:
@@ -289,10 +251,13 @@ def main():
 
             if rewrote:
                 print("rewriting", package_file)
-                chmod(str(package_file), "u+w")
+                # Making the file writable
+                st_mode = package_file.stat().st_mode
+                package_file.chmod(st_mode | stat.S_IWUSR)
                 with package_file.open("rb+") as f:
                     f.seek(0)
                     macho.write(f)
+                package_file.chmod(st_mode)
 
 
 if __name__ == "__main__":
