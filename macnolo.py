@@ -78,17 +78,22 @@ launcher_template = Template(
 #include <unistd.h> /* for fork */
 #include <sys/types.h> /* for pid_t */
 #include <sys/wait.h> /* for wait */
+#include <string.h>
+#include <libgen.h>
 
-int main()
+int main(int argc, char** argv)
 {
     /*Spawn a child to run the program.*/
     pid_t pid=fork();
     if (pid==0) { /* child process */
         char cwd[1024];
-        getcwd(cwd, sizeof(cwd));
+        char* dname = dirname(argv[0]);
+        strcpy(cwd, dname);
+        strcat(cwd, "/$script_folder");
+        chdir(cwd);
         printf("Current working dir: %s\\n", cwd);
-        static char *argv[]={"python3", "$script_path", NULL};
-        execv("../Resources/libs/bin/python3", argv);
+        static char *argv[]={"python3", "$script_name", NULL};
+        execv("../libs/bin/python3", argv);
         exit(127); /* only if execv fails */
     }
     else { /* pid!=0; parent process */
@@ -180,7 +185,9 @@ def create_launcher(app_folder, script_path):
     c_temp_file = tempfile.mktemp(suffix=".c")
     print("\t", c_temp_file)
     with open(c_temp_file, "w") as f:
-        f.write(launcher_template.substitute(script_path=script_path))
+        f.write(launcher_template.substitute(script_path=script_path,
+        script_folder=relative_to(script_path.parent, exec_file.parent),
+        script_name=script_path.name))
     print("Compiling launcher")
     print(subprocess.check_call(["clang", c_temp_file, "-o", exec_file]))
 
@@ -222,7 +229,7 @@ def main():
         extract_files(package_path, application_folder)
 
     create_launcher(
-        app_folder, relative_to(application_folder.joinpath(start_script), binary_folder)
+        app_folder, application_folder.joinpath(start_script)
     )
 
     downloaded = []
