@@ -265,10 +265,10 @@ def main():
 
     path_by_file = {}
     for extracted_file in extracted_files:
-        path_by_file["/".join(extracted_file.parts[-3:])] = extracted_file
+        path_by_file["/".join(extracted_file.parts[-2:])] = extracted_file
 
     def change_func(path):
-        new_path = path_by_file.get("/".join(path.split("/")[-3:]), path)
+        new_path = path_by_file.get("/".join(path.split("/")[-2:]), path)
         if path == new_path:
             return path
         return "@loader_path/" + relative_to(new_path, package_file.parent)
