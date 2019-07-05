@@ -5,9 +5,11 @@
     "packages": ["python", "vtk", "gdcm"],
     "ignore_packages": ["boost", "python@2", "gcc", "pyqt", "little-cms2"],
     "mac_version": "high_sierra",
+    "pip_packages": ["wxPython", "numpy"],
     "app_package": {
         "type": "file",
         "path": "teste.py",
         "start_script": "teste.py"
-    }
+    },
+    "exclude_files": ["*.c", "*.h", "libs/include/", "libs/mkspecs/", "libs/translations/", "libs/IDLE 3.app"]
 }

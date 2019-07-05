@@ -1,4 +1,5 @@
 import functools
+import glob
 import hashlib
 import json
 import operator
@@ -54,6 +55,28 @@ int main(int argc, char** argv)
 )
 
 
+def run_cmd(cmd):
+    with subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines=True
+    ) as p:
+        for line in p.stdout:
+            print(line, end="")
+
+    if p.returncode != 0:
+        raise subprocess.CalledProcessError(p.returncode, p.args)
+
+
+def download_and_install_pip(python_exec):
+    print("Downloading and installing pip")
+    pip_path = download_and_check("https://bootstrap.pypa.io/get-pip.py")
+    run_cmd([str(python_exec), str(pip_path)])
+
+
+def pip_install(python_exec, pip_package):
+    print("Installing", pip_package)
+    run_cmd([str(python_exec), "-m", "pip", "install", pip_package])
+
+
 def calc_hash(filename):
     with open(filename, "r+b") as f:
         h = hashlib.sha256(f.read())
@@ -63,19 +86,6 @@ def calc_hash(filename):
 def relative_to(path, rel):
     path = pathlib.Path(path)
     return os.path.relpath(str(path.parent), str(rel)) + "/" + path.parts[-1]
-
-
-def get_shared_lib_deps(shared_lib_filename):
-    output = subprocess.check_output(("otool", "-L", str(shared_lib_filename)))
-    libs = output.split(b"\n")
-    return [i.strip().split()[0].decode("utf8") for i in libs if i.startswith(b"\t")]
-
-
-def change_libs_path(lib, old_path, new_path):
-    output = subprocess.check_output(
-        ("install_name_tool", "-change", old_path, new_path, lib)
-    )
-    print(output)
 
 
 def download_and_check(url, sha=None):
@@ -113,7 +123,7 @@ def create_app_info(app_folder, app_name, version, icon):
     info = {
         "CFBundlePackageType": "APPL",
         "CFBundleInfoDictionaryVersion": "6.0",
-        "CFBundleIconFile": "icon.icns",
+        "CFBundleIconFile": icon,
         "CFBundleName": app_name,
         "CFBundleExecutable": "run",
         "CFBundleIdentifier": app_name,
@@ -134,11 +144,15 @@ def create_launcher(app_folder, script_path):
     c_temp_file = tempfile.mktemp(suffix=".c")
     print("\t", c_temp_file)
     with open(c_temp_file, "w") as f:
-        f.write(launcher_template.substitute(script_path=script_path,
-        script_folder=relative_to(script_path.parent, exec_file.parent),
-        script_name=script_path.name))
+        f.write(
+            launcher_template.substitute(
+                script_path=script_path,
+                script_folder=relative_to(script_path.parent, exec_file.parent),
+                script_name=script_path.name,
+            )
+        )
     print("Compiling launcher")
-    print(subprocess.check_call(["clang", c_temp_file, "-o", exec_file]))
+    run_cmd(["clang", c_temp_file, "-o", exec_file])
 
 
 def main():
@@ -152,6 +166,7 @@ def main():
     icon = dict_json["icon"]
     packages = dict_json["packages"]
     ignore_packages = dict_json["ignore_packages"]
+    pip_packages = dict_json["pip_packages"]
     mac_version = dict_json["mac_version"]
     package_type = dict_json["app_package"]["type"]
     if package_type == package_type:
@@ -160,7 +175,7 @@ def main():
         package_url = dict_json["app_package"]["url"]
         package_path = download_and_check(package_url)
     start_script = dict_json["app_package"]["start_script"]
-
+    exclude_files = dict_json["exclude_files"]
 
     # Creating folders
     app_folder = pathlib.Path(app_name + ".app")
@@ -180,7 +195,7 @@ def main():
 
     # Copying icon in the package
     shutil.copy2(base_path.joinpath(icon), resources_folder)
-    
+
     # Creating Info.plist file
     create_app_info(app_folder, app_name, version, icon)
 
@@ -190,9 +205,7 @@ def main():
     else:
         extract_files(package_path, application_folder)
 
-    create_launcher(
-        app_folder, application_folder.joinpath(start_script)
-    )
+    create_launcher(app_folder, application_folder.joinpath(start_script))
 
     downloaded = []
     package_files = []
@@ -222,8 +235,12 @@ def main():
 
     if "python" in downloaded:
         site_packages = libs_folder.joinpath("lib/python3.7/site-packages")
-        link_site_packages = libs_folder.joinpath("Frameworks/Python.framework/Versions/3.7/lib/python3.7/site-packages")
-        os.symlink(relative_to(site_packages, link_site_packages.parent), link_site_packages)
+        link_site_packages = libs_folder.joinpath(
+            "Frameworks/Python.framework/Versions/3.7/lib/python3.7/site-packages"
+        )
+        os.symlink(
+            relative_to(site_packages, link_site_packages.parent), link_site_packages
+        )
 
     path_by_file = {}
     for extracted_file in extracted_files:
@@ -259,6 +276,29 @@ def main():
                     macho.write(f)
                 package_file.chmod(st_mode)
 
+    # Installing python packages using pip
+    PYTHON_EXEC = libs_folder.joinpath("bin/python3")
+    download_and_install_pip(PYTHON_EXEC)
+    for pip_package in pip_packages:
+        pip_install(PYTHON_EXEC, pip_package)
+
+    # Excluding files marked to exclusion by user
+    print("Removing files")
+    for exclude_file in exclude_files:
+        if glob.has_magic(exclude_file):
+            for ff in resources_folder.glob("**/{}".format(exclude_file)):
+                print("\tremoving", ff)
+                if ff.is_dir():
+                    shutil.rmtree(str(ff), ignore_errors=True)
+                else:
+                    ff.unlink()
+        else:
+            ff = resources_folder.joinpath(exclude_file)
+            print("\tremoving", ff)
+            if ff.is_dir():
+                shutil.rmtree(str(ff), ignore_errors=True)
+            else:
+                ff.unlink()
 
 if __name__ == "__main__":
     main()
