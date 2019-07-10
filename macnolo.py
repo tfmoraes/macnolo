@@ -1,7 +1,10 @@
+#!/usr/bin/env python3
+
 import functools
 import glob
 import hashlib
 import json
+import logging
 import operator
 import os
 import pathlib
@@ -13,12 +16,17 @@ import sys
 import tarfile
 import tempfile
 from string import Template
+from typing import List
 from urllib import request
 
 from macholib import MachO
 
+level=logging.INFO
+if os.environ.get('DEBUG', False):
+    level=logging.DEBUG
+logging.basicConfig(format='%(message)s', level=level)
 
-CACHE_FOLDER = pathlib.Path(".cache")
+CACHE_FOLDER = pathlib.Path.home().joinpath(".cache/macnolo/")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
 
 launcher_template = Template(
@@ -67,13 +75,13 @@ def run_cmd(cmd):
 
 
 def download_and_install_pip(python_exec):
-    print("Downloading and installing pip")
+    logging.info("Downloading and installing pip")
     pip_path = download_and_check("https://bootstrap.pypa.io/get-pip.py")
     run_cmd([str(python_exec), str(pip_path)])
 
 
 def pip_install(python_exec, pip_package):
-    print("Installing", pip_package)
+    logging.info(f"Installing {pip_package}")
     run_cmd([str(python_exec), "-m", "pip", "install", pip_package])
 
 
@@ -93,24 +101,28 @@ def download_and_check(url, sha=None):
     filepath = CACHE_FOLDER.joinpath(filename)
     if filepath.exists():
         if sha is None or calc_hash(filepath) == sha:
-            print("Already downloaded")
+            logging.info("Already downloaded")
             return filepath
         else:
-            print("Sha256 doesn't match downloading again.")
+            logging.info("Sha256 doesn't match downloading again.")
 
     with open(filepath, "w+b") as f:
         r = request.urlopen(url)
         for bits in r:
             f.write(bits)
+
+    if sha and calc_hash(filepath) != sha:
+        raise ValueError("Sha256 doesn't match")
     return filepath
 
 
 def extract_files(filename, dest, skip_path=2):
-    print("Extracting", filename)
+    logging.info(f"Extracting {filename}")
     extracted_files = []
     with tarfile.open(filename) as tf:
         for ti in tf:
             dest_name = dest.joinpath("/".join(ti.name.split("/")[skip_path:]))
+            logging.debug(dest_name)
             if ti.isdir():
                 dest_name.mkdir(parents=True, exist_ok=True)
             tf._extract_member(ti, str(dest_name), not ti.isdir())
@@ -118,8 +130,40 @@ def extract_files(filename, dest, skip_path=2):
     return extracted_files
 
 
+def download_packages(
+    packages: List[str], mac_version: str, ignore_packages: List[str]
+):
+    # Download packages and their dependencies if the depency is not in
+    # ignore_packages. Return a list package files.
+    downloads = packages[:]
+    downloaded = []
+    package_files = {}
+    while downloads:
+        package = downloads.pop(0)
+        r = request.urlopen(f"https://formulae.brew.sh/api/formula/{package}.json")
+        package_info = json.load(r)
+        dependencies = package_info["dependencies"]
+        bottle_url = package_info["bottle"]["stable"]["files"][mac_version]["url"]
+        bottle_hash = package_info["bottle"]["stable"]["files"][mac_version]["sha256"]
+        version = package_info["versions"]["stable"]
+        logging.info(f"Downloading {package} (version: {version})")
+        package_files[package] = {
+            "file": download_and_check(bottle_url, bottle_hash),
+            "version": version,
+        }
+        for dependency in dependencies:
+            if (
+                dependency not in ignore_packages
+                and dependency not in packages
+                and dependency not in downloaded
+            ):
+                downloads.append(dependency)
+        downloaded.append(package)
+    return package_files
+
+
 def create_app_info(app_folder, app_name, version, icon):
-    print("Generating info.plist")
+    logging.info("Generating info.plist")
     info = {
         "CFBundlePackageType": "APPL",
         "CFBundleInfoDictionaryVersion": "6.0",
@@ -139,10 +183,10 @@ def create_app_info(app_folder, app_name, version, icon):
 
 
 def create_launcher(app_folder, script_path):
-    print("Creating lancher")
+    logging.info("Creating lancher")
     exec_file = app_folder.joinpath("Contents/MacOS/run")
     c_temp_file = tempfile.mktemp(suffix=".c")
-    print("\t", c_temp_file)
+    logging.debug(f"\t{c_temp_file}")
     with open(c_temp_file, "w") as f:
         f.write(
             launcher_template.substitute(
@@ -151,7 +195,7 @@ def create_launcher(app_folder, script_path):
                 script_name=script_path.name,
             )
         )
-    print("Compiling launcher")
+    logging.info("Compiling launcher")
     run_cmd(["clang", c_temp_file, "-o", exec_file])
 
 
@@ -178,7 +222,7 @@ def main():
     exclude_files = dict_json["exclude_files"]
 
     # Creating folders
-    app_folder = pathlib.Path(app_name + ".app")
+    app_folder = base_path.joinpath(app_name + ".app")
     app_folder.mkdir(parents=True, exist_ok=True)
 
     resources_folder = app_folder.joinpath("Contents/Resources")
@@ -207,36 +251,19 @@ def main():
 
     create_launcher(app_folder, application_folder.joinpath(start_script))
 
-    downloaded = []
-    package_files = []
-    while packages:
-        package = packages.pop(0)
-        print(
-            "package", package, f"https://formulae.brew.sh/api/formula/{package}.json"
-        )
-        r = request.urlopen(f"https://formulae.brew.sh/api/formula/{package}.json")
-        package_info = json.load(r)
-        dependencies = package_info["dependencies"]
-        bottle_url = package_info["bottle"]["stable"]["files"][mac_version]["url"]
-        bottle_hash = package_info["bottle"]["stable"]["files"][mac_version]["sha256"]
-        package_files.append(download_and_check(bottle_url, bottle_hash))
-        for dependency in dependencies:
-            if (
-                dependency not in ignore_packages
-                and dependency not in packages
-                and dependency not in downloaded
-            ):
-                packages.append(dependency)
-        downloaded.append(package)
-
+    package_files = download_packages(packages, mac_version, ignore_packages)
     extracted_files = []
     for package in package_files:
-        extracted_files.extend(extract_files(package, libs_folder))
+        extracted_files.extend(
+            extract_files(package_files[package]["file"], libs_folder)
+        )
 
-    if "python" in downloaded:
-        site_packages = libs_folder.joinpath("lib/python3.7/site-packages")
+    if 'python' in package_files:
+        logging.info("Creating symlink")
+        major, minor, _ = package_files["python"]["version"].split('.')
+        site_packages = libs_folder.joinpath(f"lib/python{major}.{minor}/site-packages")
         link_site_packages = libs_folder.joinpath(
-            "Frameworks/Python.framework/Versions/3.7/lib/python3.7/site-packages"
+            f"Frameworks/Python.framework/Versions/{major}.{minor}/lib/python{major}.{minor}/site-packages"
         )
         os.symlink(
             relative_to(site_packages, link_site_packages.parent), link_site_packages
@@ -250,7 +277,9 @@ def main():
         new_path = path_by_file.get("/".join(path.split("/")[-2:]), path)
         if path == new_path:
             return path
-        return "@loader_path/" + relative_to(new_path, package_file.parent)
+        new_path = "@loader_path/" + relative_to(new_path, package_file.parent)
+        logging.debug(f"{path} -> {new_path}")
+        return new_path
 
     for package_file in extracted_files:
         extension = package_file.suffixes
@@ -267,7 +296,7 @@ def main():
                     rewrote = True
 
             if rewrote:
-                print("rewriting", package_file)
+                logging.debug(f"rewriting {package_file}")
                 # Making the file writable
                 st_mode = package_file.stat().st_mode
                 package_file.chmod(st_mode | stat.S_IWUSR)
@@ -283,22 +312,23 @@ def main():
         pip_install(PYTHON_EXEC, pip_package)
 
     # Excluding files marked to exclusion by user
-    print("Removing files")
+    logging.info("Removing files")
     for exclude_file in exclude_files:
         if glob.has_magic(exclude_file):
             for ff in resources_folder.glob("**/{}".format(exclude_file)):
-                print("\tremoving", ff)
+                logging.debug(f"\tremoving {ff}")
                 if ff.is_dir():
                     shutil.rmtree(str(ff), ignore_errors=True)
                 else:
                     ff.unlink()
         else:
             ff = resources_folder.joinpath(exclude_file)
-            print("\tremoving", ff)
+            logging.debug(f"\tremoving {ff}")
             if ff.is_dir():
                 shutil.rmtree(str(ff), ignore_errors=True)
             else:
                 ff.unlink()
+
 
 if __name__ == "__main__":
     main()
