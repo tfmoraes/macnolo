@@ -9,6 +9,7 @@ import operator
 import os
 import pathlib
 import plistlib
+import shlex
 import shutil
 import stat
 import subprocess
@@ -63,9 +64,10 @@ int main(int argc, char** argv)
 )
 
 
-def run_cmd(cmd):
+def run_cmd(cmd, env=None, cwd=None):
     with subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines=True
+        cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines=True,
+        env=env, cwd=cwd
     ) as p:
         for line in p.stdout:
             print(line, end="")
@@ -213,13 +215,15 @@ def main():
     pip_packages = dict_json["pip_packages"]
     mac_version = dict_json["mac_version"]
     package_type = dict_json["app_package"]["type"]
-    if package_type == package_type:
+    if package_type == "file":
         package_path = base_path.joinpath(dict_json["app_package"]["path"])
     else:
-        package_url = dict_json["app_package"]["url"]
-        package_path = download_and_check(package_url)
+        package_url = dict_json["app_package"]["path"]
+        sha = dict_json["app_package"].get("sha", None)
+        package_path = download_and_check(package_url, sha)
     start_script = dict_json["app_package"]["start_script"]
     exclude_files = dict_json["exclude_files"]
+    script_lines = dict_json["app_package"]["scripts"]
 
     # Creating folders
     app_folder = base_path.joinpath(app_name + ".app")
@@ -247,7 +251,7 @@ def main():
     if package_type == "file":
         shutil.copy2(package_path, str(application_folder))
     else:
-        extract_files(package_path, application_folder)
+        extract_files(package_path, application_folder.joinpath(app_name), 1)
 
     create_launcher(app_folder, application_folder.joinpath(start_script))
 
@@ -310,6 +314,14 @@ def main():
     download_and_install_pip(PYTHON_EXEC)
     for pip_package in pip_packages:
         pip_install(PYTHON_EXEC, pip_package)
+
+    logging.info("Running scripts")
+    my_env = os.environ.copy()
+    my_env["PATH"] = str(PYTHON_EXEC.parent) + ":" + my_env["PATH"]
+    for script_line in script_lines:
+        logging.info(script_line)
+        script_line = shlex.split(script_line)
+        run_cmd(script_line, env=my_env, cwd=str(application_folder.joinpath(start_script).parent))
 
     # Excluding files marked to exclusion by user
     logging.info("Removing files")
