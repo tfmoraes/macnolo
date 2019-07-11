@@ -1,0 +1,20 @@
+{
+    "app_name": "test",
+    "version": "3.1.99994",
+    "icon": "test.icns",
+    "packages": ["python", "vtk", "gdcm"],
+    "ignore_packages": ["boost", "python@2", "gcc", "pyqt", "little-cms2"],
+    "mac_version": "high_sierra",
+    "pip_packages": [],
+    "app_package": {
+        "source":{
+            "type": "file",
+            "path": "teste.py",
+            "patches": []
+        },
+        "start_script": "teste.py",
+        "build_commands": [
+        ]
+    },
+    "cleanup": ["*.c", "*.h", "libs/include/", "libs/mkspecs/", "libs/translations/", "libs/IDLE 3.app"]
+}

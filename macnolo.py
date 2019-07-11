@@ -30,35 +30,51 @@ logging.basicConfig(format='%(message)s', level=level)
 CACHE_FOLDER = pathlib.Path.home().joinpath(".cache/macnolo/")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
 
+
+class JSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, pathlib.PosixPath):
+            return str(o)
+        return json.JSONEncoder.default(self, o)
+
+
 launcher_template = Template(
     """
+#include <libgen.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h> /* for fork */
-#include <sys/types.h> /* for pid_t */
-#include <sys/wait.h> /* for wait */
-#include <string.h>
-#include <libgen.h>
+#include<unistd.h>  
 
-int main(int argc, char** argv)
-{
-    /*Spawn a child to run the program.*/
-    pid_t pid=fork();
-    if (pid==0) { /* child process */
-        char cwd[1024];
-        char* dname = dirname(argv[0]);
-        strcpy(cwd, dname);
-        strcat(cwd, "/$script_folder");
-        chdir(cwd);
-        printf("Current working dir: %s\\n", cwd);
-        static char *argv[]={"python3", "$script_name", NULL};
-        execv("../libs/bin/python3", argv);
-        exit(127); /* only if execv fails */
+#define SIZE_OUTPUT 24
+
+int main(int argc, char **argv) {
+    char cwd[1024];
+    char* dname = dirname(argv[0]);
+    strcpy(cwd, dname);
+    strcat(cwd, "/$script_folder");
+    chdir(cwd);
+    printf("Inside: %s\\n", cwd);
+    char cmd[2048];
+    strcpy(cmd, "$python_exec ");
+    strcat(cmd, "$script_name");
+    char output[SIZE_OUTPUT];
+    printf("Running: %s\\n", cmd);
+    FILE *fp = popen(cmd, "r");
+
+    if (fp == NULL){
+        fprintf(stderr, "could not run.\\n");
+        return EXIT_FAILURE;
     }
-    else { /* pid!=0; parent process */
-        waitpid(pid,0,0); /* wait for child to exit */
+
+    while(fgets(output, SIZE_OUTPUT, fp) != NULL) {
+        printf("%s", output);
     }
-    return 0;
+
+    if (pclose(fp) != 0){
+        fprintf(stderr, "could not run.\\n");
+    }
+    return EXIT_SUCCESS;
 }
 """
 )
@@ -184,7 +200,7 @@ def create_app_info(app_folder, app_name, version, icon):
         plistlib.dump(info, fp)
 
 
-def create_launcher(app_folder, script_path):
+def create_launcher(app_folder, script_path, python_exec):
     logging.info("Creating lancher")
     exec_file = app_folder.joinpath("Contents/MacOS/run")
     c_temp_file = tempfile.mktemp(suffix=".c")
@@ -195,6 +211,7 @@ def create_launcher(app_folder, script_path):
                 script_path=script_path,
                 script_folder=relative_to(script_path.parent, exec_file.parent),
                 script_name=script_path.name,
+                python_exec=python_exec
             )
         )
     logging.info("Compiling launcher")
@@ -211,8 +228,8 @@ def main():
     version = dict_json["version"]
     icon = dict_json["icon"]
     packages = dict_json["packages"]
-    ignore_packages = dict_json["ignore_packages"]
-    pip_packages = dict_json["pip_packages"]
+    ignore_packages = dict_json.get("ignore_packages", [])
+    pip_packages = dict_json.get("pip_packages", [])
     mac_version = dict_json["mac_version"]
     package_type = dict_json["app_package"]["source"]["type"]
     if package_type == "file":
@@ -221,10 +238,10 @@ def main():
         package_url = dict_json["app_package"]["source"]["path"]
         sha = dict_json["app_package"]["source"].get("sha", None)
         package_path = download_and_check(package_url, sha)
-    patches = dict_json["app_package"]["source"]["patches"]
+    patches = dict_json["app_package"]["source"].get("patches", [])
     start_script = dict_json["app_package"]["start_script"]
-    build_commands = dict_json["app_package"]["build_commands"]
-    exclude_files = dict_json["cleanup"]
+    build_commands = dict_json["app_package"].get("build_commands", [])
+    exclude_files = dict_json.get("cleanup", [])
 
     # Creating folders
     app_folder = base_path.joinpath(app_name + ".app")
@@ -241,27 +258,6 @@ def main():
 
     application_folder = resources_folder.joinpath("app")
     application_folder.mkdir(parents=True, exist_ok=True)
-
-    # Copying icon in the package
-    shutil.copy2(base_path.joinpath(icon), resources_folder)
-
-    # Creating Info.plist file
-    create_app_info(app_folder, app_name, version, icon)
-
-    # Copying or extracting app files inside the package
-    if package_type == "file":
-        shutil.copy2(package_path, str(application_folder))
-    else:
-        extract_files(package_path, application_folder.joinpath(app_name), 1)
-
-    #applying patch
-    logging.info("Applying patches")
-    for patch in patches:
-        patch = base_path.joinpath(patch).resolve()
-        logging.info(patch)
-        run_cmd(["patch", "-i", str(patch)], cwd=str(application_folder.joinpath(start_script).parent))
-
-    create_launcher(app_folder, application_folder.joinpath(start_script))
 
     package_files = download_packages(packages, mac_version, ignore_packages)
     extracted_files = []
@@ -284,6 +280,10 @@ def main():
     path_by_file = {}
     for extracted_file in extracted_files:
         path_by_file["/".join(extracted_file.parts[-2:])] = extracted_file
+
+    print("writing json file")
+    with open("/tmp/files.json", "w") as f:
+        f.write(JSONEncoder().encode(path_by_file))
 
     def change_func(path):
         new_path = path_by_file.get("/".join(path.split("/")[-2:]), path)
@@ -323,6 +323,25 @@ def main():
     for pip_package in pip_packages:
         pip_install(PYTHON_EXEC, pip_package)
 
+    # Copying icon in the package
+    shutil.copy2(base_path.joinpath(icon), resources_folder)
+
+    # Creating Info.plist file
+    create_app_info(app_folder, app_name, version, icon)
+
+    # Copying or extracting app files inside the package
+    if package_type == "file":
+        shutil.copy2(package_path, str(application_folder))
+    else:
+        extract_files(package_path, application_folder.joinpath(app_name), 1)
+
+    #applying patch
+    logging.info("Applying patches")
+    for patch in patches:
+        patch = base_path.joinpath(patch).resolve()
+        logging.info(patch)
+        run_cmd(["patch", "-i", str(patch)], cwd=str(application_folder.joinpath(start_script).parent))
+
     logging.info("Running scripts")
     my_env = os.environ.copy()
     my_env["PATH"] = str(PYTHON_EXEC.parent) + ":" + my_env["PATH"]
@@ -330,6 +349,9 @@ def main():
         logging.info(build_command)
         build_command = shlex.split(build_command)
         run_cmd(build_command, env=my_env, cwd=str(application_folder.joinpath(start_script).parent))
+
+    start_script = application_folder.joinpath(start_script)
+    create_launcher(app_folder, start_script, relative_to(PYTHON_EXEC, start_script.parent))
 
     # Excluding files marked to exclusion by user
     logging.info("Removing files")
