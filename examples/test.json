@@ -7,13 +7,16 @@
     "mac_version": "high_sierra",
     "pip_packages": ["wxPython", "numpy"],
     "app_package": {
-        "type": "url",
-        "path": "https://github.com/invesalius/invesalius3/archive/v3.1.99994.tar.gz",
-        "sha": "493aff36e000f3a98aad5b6532fd2e0f960e779a6db2821390f05e5c9e2067eb",
+        "source":{
+            "type": "url",
+            "path": "https://github.com/invesalius/invesalius3/archive/v3.1.99994.tar.gz",
+            "sha": "493aff36e000f3a98aad5b6532fd2e0f960e779a6db2821390f05e5c9e2067eb",
+            "patches": ["0001-using-clang-to-compile-with-openmp-in-mac.patch"]
+        },
         "start_script": "InVesalius/app.py",
-        "scripts": [
+        "build_commands": [
             "python3 setup.py build_ext --inplace"
         ]
     },
-    "exclude_files": ["*.c", "*.h", "libs/include/", "libs/mkspecs/", "libs/translations/", "libs/IDLE 3.app"]
+    "cleanup": ["*.c", "*.h", "libs/include/", "libs/mkspecs/", "libs/translations/", "libs/IDLE 3.app"]
 }

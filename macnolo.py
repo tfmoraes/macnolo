@@ -214,16 +214,17 @@ def main():
     ignore_packages = dict_json["ignore_packages"]
     pip_packages = dict_json["pip_packages"]
     mac_version = dict_json["mac_version"]
-    package_type = dict_json["app_package"]["type"]
+    package_type = dict_json["app_package"]["source"]["type"]
     if package_type == "file":
-        package_path = base_path.joinpath(dict_json["app_package"]["path"])
+        package_path = base_path.joinpath(dict_json["app_package"]["source"]["path"])
     else:
-        package_url = dict_json["app_package"]["path"]
-        sha = dict_json["app_package"].get("sha", None)
+        package_url = dict_json["app_package"]["source"]["path"]
+        sha = dict_json["app_package"]["source"].get("sha", None)
         package_path = download_and_check(package_url, sha)
+    patches = dict_json["app_package"]["source"]["patches"]
     start_script = dict_json["app_package"]["start_script"]
-    exclude_files = dict_json["exclude_files"]
-    script_lines = dict_json["app_package"]["scripts"]
+    build_commands = dict_json["app_package"]["build_commands"]
+    exclude_files = dict_json["cleanup"]
 
     # Creating folders
     app_folder = base_path.joinpath(app_name + ".app")
@@ -252,6 +253,13 @@ def main():
         shutil.copy2(package_path, str(application_folder))
     else:
         extract_files(package_path, application_folder.joinpath(app_name), 1)
+
+    #applying patch
+    logging.info("Applying patches")
+    for patch in patches:
+        patch = base_path.joinpath(patch).resolve()
+        logging.info(patch)
+        run_cmd(["patch", "-i", str(patch)], cwd=str(application_folder.joinpath(start_script).parent))
 
     create_launcher(app_folder, application_folder.joinpath(start_script))
 
@@ -318,10 +326,10 @@ def main():
     logging.info("Running scripts")
     my_env = os.environ.copy()
     my_env["PATH"] = str(PYTHON_EXEC.parent) + ":" + my_env["PATH"]
-    for script_line in script_lines:
-        logging.info(script_line)
-        script_line = shlex.split(script_line)
-        run_cmd(script_line, env=my_env, cwd=str(application_folder.joinpath(start_script).parent))
+    for build_command in build_commands:
+        logging.info(build_command)
+        build_command = shlex.split(build_command)
+        run_cmd(build_command, env=my_env, cwd=str(application_folder.joinpath(start_script).parent))
 
     # Excluding files marked to exclusion by user
     logging.info("Removing files")
