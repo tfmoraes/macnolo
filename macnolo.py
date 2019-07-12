@@ -25,7 +25,7 @@ from macholib import MachO
 level=logging.INFO
 if os.environ.get('DEBUG', False):
     level=logging.DEBUG
-logging.basicConfig(format='%(message)s', level=level)
+logging.basicConfig(filename='/tmp/saida.log', filemode='w', format='%(message)s', level=level)
 
 CACHE_FOLDER = pathlib.Path.home().joinpath(".cache/macnolo/")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -279,23 +279,46 @@ def main():
 
     path_by_file = {}
     for extracted_file in extracted_files:
-        path_by_file["/".join(extracted_file.parts[-2:])] = extracted_file
+        #  path_by_file["/".join(extracted_file.parts[-2:])] = extracted_file
+        try:
+            path_by_file[str(extracted_file.parts[-1])].append(extracted_file)
+        except:
+            path_by_file[str(extracted_file.parts[-1])] = [extracted_file,]
 
-    print("writing json file")
-    with open("/tmp/files.json", "w") as f:
-        f.write(JSONEncoder().encode(path_by_file))
+    #  print("writing json file")
+    #  with open("/tmp/files.json", "w") as f:
+        #  #  f.write(JSONEncoder().encode(path_by_file))
+        #  json.dump(path_by_file, f)
 
     def change_func(path):
-        new_path = path_by_file.get("/".join(path.split("/")[-2:]), path)
-        if path == new_path:
+        if path.startswith("@@HOMEBREW_CELLAR@@"):
+            new_path = libs_folder.joinpath("/".join(path.split("/")[3:]))
+            new_path = "@loader_path/" + relative_to(new_path, package_file.parent)
+            logging.debug(f"{package_file}: {path} -> {new_path}")
+            return new_path
+        else:
+            for new_path in path_by_file.get(path.split("/")[-1], [path,]):
+                if path == new_path:
+                    logging.debug(f"{package_file}: {path} -> {new_path}")
+                    return path
+                elif new_path == str(package_file):
+                    continue
+                elif not str(new_path).endswith(".dylib") or not str(new_path).endswith(".so"):
+                    try:
+                        m = MachO.MachO(str(new_path))
+                    except Exception:
+                        continue
+                    if m.headers[0].filetype == "execute":
+                        continue
+                new_path = "@loader_path/" + relative_to(new_path, package_file.parent)
+                logging.debug(f"{package_file}: {path} -> {new_path}")
+                return new_path
+            logging.debug(f"{package_file}: {path} -> {path}")
             return path
-        new_path = "@loader_path/" + relative_to(new_path, package_file.parent)
-        logging.debug(f"{path} -> {new_path}")
-        return new_path
 
     for package_file in extracted_files:
         extension = package_file.suffixes
-        if package_file.is_file():
+        if package_file.is_file() and not package_file.is_symlink():
             try:
                 # print(package_file)
                 macho = MachO.MachO(str(package_file))
