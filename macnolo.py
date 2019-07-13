@@ -259,6 +259,9 @@ def main():
     application_folder = resources_folder.joinpath("app")
     application_folder.mkdir(parents=True, exist_ok=True)
 
+    start_script_path = application_folder.joinpath(start_script)
+    start_script_folder = start_script_path.parent
+
     package_files = download_packages(packages, mac_version, ignore_packages)
     extracted_files = []
     for package in package_files:
@@ -356,25 +359,31 @@ def main():
     if package_type == "file":
         shutil.copy2(package_path, str(application_folder))
     else:
-        extract_files(package_path, application_folder.joinpath(app_name), 1)
+        extract_files(package_path, start_script_folder, 1)
 
     #applying patch
     logging.info("Applying patches")
     for patch in patches:
         patch = base_path.joinpath(patch).resolve()
         logging.info(patch)
-        run_cmd(["patch", "-p", "1", "-i", str(patch)], cwd=str(application_folder.joinpath(start_script).parent))
+        run_cmd(["patch", "-p", "1", "-i", str(patch)], cwd=str(start_script_folder))
 
-    logging.info("Running scripts")
+    c_libs_folders = [libs_folder.joinpath("lib").resolve()]
+    c_include_folders = [libs_folder.joinpath("include").resolve()]
     my_env = os.environ.copy()
-    my_env["PATH"] = str(PYTHON_EXEC.parent) + ":" + my_env["PATH"]
+    my_env["PATH"] = str(PYTHON_EXEC.parent.resolve()) + ":" + my_env["PATH"]
+    my_env["CFLAGS"] = " ".join("-I{}".format(i) for i in c_include_folders) + " " + " ".join("-L{}".format(i) for i in c_libs_folders)
+    my_env["CXXFLAGS"] = " ".join("-I{}".format(i) for i in c_include_folders) + " " + " ".join("-L{}".format(i) for i in c_libs_folders)
+    logging.info("Running scripts")
+    logging.debug("PATH=" + my_env["PATH"])
+    logging.debug("CFLAGS=" + my_env["CFLAGS"])
+    logging.debug("CXXFLAGS=" + my_env["CXXFLAGS"])
     for build_command in build_commands:
         logging.info(build_command)
         build_command = shlex.split(build_command)
-        run_cmd(build_command, env=my_env, cwd=str(application_folder.joinpath(start_script).parent))
+        run_cmd(build_command, env=my_env, cwd=str(start_script_folder))
 
-    start_script = application_folder.joinpath(start_script)
-    create_launcher(app_folder, start_script, relative_to(PYTHON_EXEC, start_script.parent))
+    create_launcher(app_folder, start_script_path, relative_to(PYTHON_EXEC, start_script_folder))
 
     # Excluding files marked to exclusion by user
     logging.info("Removing files")
