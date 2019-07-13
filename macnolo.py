@@ -22,10 +22,12 @@ from urllib import request
 
 from macholib import MachO
 
-level=logging.INFO
-if os.environ.get('DEBUG', False):
-    level=logging.DEBUG
-logging.basicConfig(filename='/tmp/saida.log', filemode='w', format='%(message)s', level=level)
+level = logging.INFO
+if os.environ.get("DEBUG", False):
+    level = logging.DEBUG
+logging.basicConfig(
+    filename="/tmp/saida.log", filemode="w", format="%(message)s", level=level
+)
 
 CACHE_FOLDER = pathlib.Path.home().joinpath(".cache/macnolo/")
 CACHE_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -36,6 +38,44 @@ class JSONEncoder(json.JSONEncoder):
         if isinstance(o, pathlib.PosixPath):
             return str(o)
         return json.JSONEncoder.default(self, o)
+
+
+class SharedLibraryChanger:
+    def __init__(self, package_file, path_by_file, libs_folder):
+        self.package_file = package_file
+        self.path_by_file = path_by_file
+        self.libs_folder = libs_folder
+
+    def __call__(self, path):
+        package_file = self.package_file
+        path_by_file = self.path_by_file
+        libs_folder = self.libs_folder
+        if path.startswith("@@HOMEBREW_CELLAR@@"):
+            new_path = libs_folder.joinpath("/".join(path.split("/")[3:]))
+            new_path = "@loader_path/" + relative_to(new_path, package_file.parent)
+            logging.debug(f"{package_file}: {path} -> {new_path}")
+            return new_path
+        else:
+            for new_path in path_by_file.get(path.split("/")[-1], [path]):
+                if path == new_path:
+                    logging.debug(f"{package_file}: {path} -> {new_path}")
+                    return path
+                elif new_path == str(package_file):
+                    continue
+                elif not str(new_path).endswith(".dylib") or not str(new_path).endswith(
+                    ".so"
+                ):
+                    try:
+                        m = MachO.MachO(str(new_path))
+                    except Exception:
+                        continue
+                    if m.headers[0].filetype == "execute":
+                        continue
+                new_path = "@loader_path/" + relative_to(new_path, package_file.parent)
+                logging.debug(f"{package_file}: {path} -> {new_path}")
+                return new_path
+            logging.debug(f"{package_file}: {path} -> {path}")
+            return path
 
 
 launcher_template = Template(
@@ -82,8 +122,12 @@ int main(int argc, char **argv) {
 
 def run_cmd(cmd, env=None, cwd=None):
     with subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines=True,
-        env=env, cwd=cwd
+        cmd,
+        stdout=subprocess.PIPE,
+        bufsize=1,
+        universal_newlines=True,
+        env=env,
+        cwd=cwd,
     ) as p:
         for line in p.stdout:
             print(line, end="")
@@ -211,7 +255,7 @@ def create_launcher(app_folder, script_path, python_exec):
                 script_path=script_path,
                 script_folder=relative_to(script_path.parent, exec_file.parent),
                 script_name=script_path.name,
-                python_exec=python_exec
+                python_exec=python_exec,
             )
         )
     logging.info("Compiling launcher")
@@ -269,9 +313,9 @@ def main():
             extract_files(package_files[package]["file"], libs_folder)
         )
 
-    if 'python' in package_files:
+    if "python" in package_files:
         logging.info("Creating symlink")
-        major, minor, _ = package_files["python"]["version"].split('.')
+        major, minor, _ = package_files["python"]["version"].split(".")
         site_packages = libs_folder.joinpath(f"lib/python{major}.{minor}/site-packages")
         link_site_packages = libs_folder.joinpath(
             f"Frameworks/Python.framework/Versions/{major}.{minor}/lib/python{major}.{minor}/site-packages"
@@ -286,38 +330,12 @@ def main():
         try:
             path_by_file[str(extracted_file.parts[-1])].append(extracted_file)
         except:
-            path_by_file[str(extracted_file.parts[-1])] = [extracted_file,]
+            path_by_file[str(extracted_file.parts[-1])] = [extracted_file]
 
     #  print("writing json file")
     #  with open("/tmp/files.json", "w") as f:
-        #  #  f.write(JSONEncoder().encode(path_by_file))
-        #  json.dump(path_by_file, f)
-
-    def change_func(path):
-        if path.startswith("@@HOMEBREW_CELLAR@@"):
-            new_path = libs_folder.joinpath("/".join(path.split("/")[3:]))
-            new_path = "@loader_path/" + relative_to(new_path, package_file.parent)
-            logging.debug(f"{package_file}: {path} -> {new_path}")
-            return new_path
-        else:
-            for new_path in path_by_file.get(path.split("/")[-1], [path,]):
-                if path == new_path:
-                    logging.debug(f"{package_file}: {path} -> {new_path}")
-                    return path
-                elif new_path == str(package_file):
-                    continue
-                elif not str(new_path).endswith(".dylib") or not str(new_path).endswith(".so"):
-                    try:
-                        m = MachO.MachO(str(new_path))
-                    except Exception:
-                        continue
-                    if m.headers[0].filetype == "execute":
-                        continue
-                new_path = "@loader_path/" + relative_to(new_path, package_file.parent)
-                logging.debug(f"{package_file}: {path} -> {new_path}")
-                return new_path
-            logging.debug(f"{package_file}: {path} -> {path}")
-            return path
+    #  #  f.write(JSONEncoder().encode(path_by_file))
+    #  json.dump(path_by_file, f)
 
     for package_file in extracted_files:
         extension = package_file.suffixes
@@ -326,15 +344,15 @@ def main():
                 # print(package_file)
                 macho = MachO.MachO(str(package_file))
             except Exception:
-                # Not lib
+                # Not lib or executable
                 continue
             rewrote = False
+            changer = SharedLibraryChanger(package_file, path_by_file, libs_folder)
             for header in macho.headers:
-                if macho.rewriteLoadCommands(change_func):
+                if macho.rewriteLoadCommands(changer):
                     rewrote = True
 
             if rewrote:
-                logging.debug(f"rewriting {package_file}")
                 # Making the file writable
                 st_mode = package_file.stat().st_mode
                 package_file.chmod(st_mode | stat.S_IWUSR)
@@ -361,7 +379,7 @@ def main():
     else:
         extract_files(package_path, start_script_folder, 1)
 
-    #applying patch
+    # applying patch
     logging.info("Applying patches")
     for patch in patches:
         patch = base_path.joinpath(patch).resolve()
@@ -372,8 +390,16 @@ def main():
     c_include_folders = [libs_folder.joinpath("include").resolve()]
     my_env = os.environ.copy()
     my_env["PATH"] = str(PYTHON_EXEC.parent.resolve()) + ":" + my_env["PATH"]
-    my_env["CFLAGS"] = " ".join("-I{}".format(i) for i in c_include_folders) + " " + " ".join("-L{}".format(i) for i in c_libs_folders)
-    my_env["CXXFLAGS"] = " ".join("-I{}".format(i) for i in c_include_folders) + " " + " ".join("-L{}".format(i) for i in c_libs_folders)
+    my_env["CFLAGS"] = (
+        " ".join("-I{}".format(i) for i in c_include_folders)
+        + " "
+        + " ".join("-L{}".format(i) for i in c_libs_folders)
+    )
+    my_env["CXXFLAGS"] = (
+        " ".join("-I{}".format(i) for i in c_include_folders)
+        + " "
+        + " ".join("-L{}".format(i) for i in c_libs_folders)
+    )
     logging.info("Running scripts")
     logging.debug("PATH=" + my_env["PATH"])
     logging.debug("CFLAGS=" + my_env["CFLAGS"])
@@ -383,7 +409,9 @@ def main():
         build_command = shlex.split(build_command)
         run_cmd(build_command, env=my_env, cwd=str(start_script_folder))
 
-    create_launcher(app_folder, start_script_path, relative_to(PYTHON_EXEC, start_script_folder))
+    create_launcher(
+        app_folder, start_script_path, relative_to(PYTHON_EXEC, start_script_folder)
+    )
 
     # Excluding files marked to exclusion by user
     logging.info("Removing files")
