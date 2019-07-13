@@ -1,0 +1,43 @@
+From eb4d4519e912ec2adae7fd6ef1bde018e603ebc8 Mon Sep 17 00:00:00 2001
+From: Thiago Franco de Moraes <totonixsame@gmail.com>
+Date: Tue, 11 Jun 2019 14:23:58 -0300
+Subject: [PATCH 2/5] ImmediateModeRenderingOn removed in last vtk (8.2)
+
+---
+ invesalius/data/surface.py | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/invesalius/data/surface.py b/invesalius/data/surface.py
+index 238bb84..deae890 100644
+--- a/invesalius/data/surface.py
++++ b/invesalius/data/surface.py
+@@ -379,7 +379,7 @@ class SurfaceManager():
+             mapper.ScalarVisibilityOn()
+         else:
+             mapper.ScalarVisibilityOff()
+-        mapper.ImmediateModeRenderingOn() # improve performance
++        #  mapper.ImmediateModeRenderingOn() # improve performance
+ 
+         actor = vtk.vtkActor()
+         actor.SetMapper(mapper)
+@@ -490,7 +490,7 @@ class SurfaceManager():
+             mapper = vtk.vtkPolyDataMapper()
+             mapper.SetInputConnection(stripper.GetOutputPort())
+             mapper.ScalarVisibilityOff()
+-            mapper.ImmediateModeRenderingOn() # improve performance
++            #  mapper.ImmediateModeRenderingOn() # improve performance
+ 
+             # Represent an object (geometry & properties) in the rendered scene
+             actor = vtk.vtkActor()
+@@ -532,7 +532,7 @@ class SurfaceManager():
+         mapper.SetInputData(polydata)
+         mapper.ScalarVisibilityOff()
+         #  mapper.ReleaseDataFlagOn()
+-        mapper.ImmediateModeRenderingOn() # improve performance
++        #  mapper.ImmediateModeRenderingOn() # improve performance
+ 
+         # Represent an object (geometry & properties) in the rendered scene
+         actor = vtk.vtkActor()
+-- 
+2.17.2 (Apple Git-113)
+

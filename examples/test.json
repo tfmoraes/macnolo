@@ -11,7 +11,7 @@
             "type": "url",
             "path": "https://github.com/invesalius/invesalius3/archive/v3.1.99994.tar.gz",
             "sha": "493aff36e000f3a98aad5b6532fd2e0f960e779a6db2821390f05e5c9e2067eb",
-            "patches": ["0001-using-clang-to-compile-with-openmp-in-mac.patch"]
+            "patches": ["0001-using-clang-to-compile-with-openmp-in-mac.patch", "0002-use-imageio.patch", "0002-ImmediateModeRenderingOn-removed-in-last-vtk-8.2.patch"]
         },
         "start_script": "InVesalius/app.py",
         "build_commands": [

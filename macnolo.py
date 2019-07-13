@@ -363,7 +363,7 @@ def main():
     for patch in patches:
         patch = base_path.joinpath(patch).resolve()
         logging.info(patch)
-        run_cmd(["patch", "-i", str(patch)], cwd=str(application_folder.joinpath(start_script).parent))
+        run_cmd(["patch", "-p", "1", "-i", str(patch)], cwd=str(application_folder.joinpath(start_script).parent))
 
     logging.info("Running scripts")
     my_env = os.environ.copy()
