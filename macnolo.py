@@ -409,6 +409,31 @@ def main():
         build_command = shlex.split(build_command)
         run_cmd(build_command, env=my_env, cwd=str(start_script_folder))
 
+    # Rewriting any shared lib in app folder
+    for package_file in start_script_folder.glob("**/*"):
+        extension = package_file.suffixes
+        if package_file.is_file() and not package_file.is_symlink():
+            try:
+                # print(package_file)
+                macho = MachO.MachO(str(package_file))
+            except Exception:
+                # Not lib or executable
+                continue
+            rewrote = False
+            changer = SharedLibraryChanger(package_file, path_by_file, libs_folder)
+            for header in macho.headers:
+                if macho.rewriteLoadCommands(changer):
+                    rewrote = True
+
+            if rewrote:
+                # Making the file writable
+                st_mode = package_file.stat().st_mode
+                package_file.chmod(st_mode | stat.S_IWUSR)
+                with package_file.open("rb+") as f:
+                    f.seek(0)
+                    macho.write(f)
+                package_file.chmod(st_mode)
+
     create_launcher(
         app_folder, start_script_path, relative_to(PYTHON_EXEC, start_script_folder)
     )
