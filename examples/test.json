@@ -18,5 +18,26 @@
             "python3 setup.py build_ext --inplace"
         ]
     },
-    "cleanup": ["*.c", "*.h", "libs/include/", "libs/mkspecs/", "libs/translations/", "libs/IDLE 3.app"]
+    "cleanup": [
+        "*.c",
+        "*.h",
+        "libs/include/",
+        "libs/share/",
+        "libs/doc/",
+        "libs/libexec/",
+        "libs/mkspecs/",
+        "libs/translations/",
+        "libs/IDLE 3.app",
+        "libs/qml",
+        "libs/plugins",
+        "libs/phrasebooks",
+        "libs/lib/cmake",
+        "libs/lib/pkgconfig",
+        "*.cmake",
+        "*.tex",
+        "app/InVesalius/build",
+        "app/InVesalius/contrib",
+        "app/InVesalius/po",
+        "app/InVesalius/Dockerfile"
+    ]
 }
