@@ -188,6 +188,9 @@ def extract_files(filename, dest, skip_path=2):
             if ti.isdir():
                 dest_name.mkdir(parents=True, exist_ok=True)
             tf._extract_member(ti, str(dest_name), not ti.isdir())
+            if not (ti.issym() or ti.islnk()):
+                st_mode = dest_name.stat().st_mode
+                dest_name.chmod(st_mode | stat.S_IWUSR)
             extracted_files.append(dest_name)
     return extracted_files
 
@@ -274,6 +277,7 @@ def main():
     packages = dict_json["packages"]
     ignore_packages = dict_json.get("ignore_packages", [])
     pip_packages = dict_json.get("pip_packages", [])
+    commands = dict_json.get("commands", [])
     mac_version = dict_json["mac_version"]
     package_type = dict_json["app_package"]["source"]["type"]
     if package_type == "file":
@@ -353,19 +357,21 @@ def main():
                     rewrote = True
 
             if rewrote:
-                # Making the file writable
-                st_mode = package_file.stat().st_mode
-                package_file.chmod(st_mode | stat.S_IWUSR)
                 with package_file.open("rb+") as f:
                     f.seek(0)
                     macho.write(f)
-                package_file.chmod(st_mode)
 
     # Installing python packages using pip
     PYTHON_EXEC = libs_folder.joinpath("bin/python3")
     download_and_install_pip(PYTHON_EXEC)
     for pip_package in pip_packages:
         pip_install(PYTHON_EXEC, pip_package)
+
+    logging.info("Running commands")
+    for command in commands:
+        logging.info(f"\t{command}")
+        command = shlex.split(command)
+        run_cmd(command, cwd=str(resources_folder))
 
     # Copying icon in the package
     shutil.copy2(base_path.joinpath(icon), resources_folder)
@@ -426,13 +432,9 @@ def main():
                     rewrote = True
 
             if rewrote:
-                # Making the file writable
-                st_mode = package_file.stat().st_mode
-                package_file.chmod(st_mode | stat.S_IWUSR)
                 with package_file.open("rb+") as f:
                     f.seek(0)
                     macho.write(f)
-                package_file.chmod(st_mode)
 
     create_launcher(
         app_folder, start_script_path, relative_to(PYTHON_EXEC, start_script_folder)
@@ -441,20 +443,23 @@ def main():
     # Excluding files marked to exclusion by user
     logging.info("Removing files")
     for exclude_file in exclude_files:
-        if glob.has_magic(exclude_file):
-            for ff in resources_folder.glob("**/{}".format(exclude_file)):
+        try:
+            if glob.has_magic(exclude_file):
+                for ff in resources_folder.glob("**/{}".format(exclude_file)):
+                    logging.debug(f"\tremoving {ff}")
+                    if ff.is_dir():
+                        shutil.rmtree(str(ff), ignore_errors=True)
+                    else:
+                        ff.unlink()
+            else:
+                ff = resources_folder.joinpath(exclude_file)
                 logging.debug(f"\tremoving {ff}")
                 if ff.is_dir():
                     shutil.rmtree(str(ff), ignore_errors=True)
                 else:
                     ff.unlink()
-        else:
-            ff = resources_folder.joinpath(exclude_file)
-            logging.debug(f"\tremoving {ff}")
-            if ff.is_dir():
-                shutil.rmtree(str(ff), ignore_errors=True)
-            else:
-                ff.unlink()
+        except FileNotFoundError:
+            pass
 
 
 if __name__ == "__main__":

@@ -3,9 +3,12 @@
     "version": "3.1.99994",
     "icon": "test.icns",
     "packages": ["python", "vtk", "gdcm", "libomp"],
-    "ignore_packages": ["boost", "python@2", "gcc", "pyqt", "little-cms2"],
+    "ignore_packages": ["boost", "python@2", "gcc", "qt", "pyqt", "little-cms2"],
     "mac_version": "high_sierra",
     "pip_packages": ["wxPython", "numpy", "scipy", "imageio", "scikit-image", "Pillow", "pyserial", "psutil", "nibabel", "configparser", "h5py", "cython"],
+    "commands": [
+        "sed -i '' 's/from .vtkRenderingQt import */#from .vtkRenderingQt import */g' libs/lib/python3.7/site-packages/vtkmodules/all.py"
+    ],
     "app_package": {
         "source":{
             "type": "url",
@@ -23,7 +26,6 @@
         "*.h",
         "libs/include/",
         "libs/share/",
-        "libs/doc/",
         "libs/libexec/",
         "libs/mkspecs/",
         "libs/translations/",
