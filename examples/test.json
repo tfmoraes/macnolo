@@ -1,6 +1,7 @@
 {
     "app_name": "InVesalius",
     "version": "3.1.99994",
+    "identifier": "br.gov.cti.invesalius",
     "icon": "test.icns",
     "packages": ["python", "vtk", "gdcm", "libomp"],
     "ignore_packages": ["boost", "python@2", "gcc", "qt", "pyqt", "little-cms2"],

@@ -227,18 +227,19 @@ def download_packages(
     return package_files
 
 
-def create_app_info(app_folder, app_name, version, icon):
+def create_app_info(app_folder, identifier, app_name, version, icon):
     logging.info("Generating info.plist")
     info = {
         "CFBundlePackageType": "APPL",
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleIconFile": icon,
         "CFBundleName": app_name,
-        "CFBundleExecutable": "run",
-        "CFBundleIdentifier": app_name,
+        "CFBundleDisplayName": app_name,
+        "CFBundleExecutable": app_name,
+        "CFBundleIdentifier": identifier,
         "CFBundleVersion": version,
-        "CFBundleGetInfoString": "123",
-        "CFBundleShortVersionString": version,
+        "CFBundleGetInfoString": str(version),
+        "CFBundleShortVersionString": str(version),
         "NSPrincipalClass": "NSApplication",
         "NSMainNibFile": "MainMenu",
     }
@@ -247,9 +248,9 @@ def create_app_info(app_folder, app_name, version, icon):
         plistlib.dump(info, fp)
 
 
-def create_launcher(app_folder, script_path, python_exec):
+def create_launcher(app_folder, app_name, script_path, python_exec):
     logging.info("Creating lancher")
-    exec_file = app_folder.joinpath("Contents/MacOS/run")
+    exec_file = app_folder.joinpath(f"Contents/MacOS/{app_name}")
     c_temp_file = tempfile.mktemp(suffix=".c")
     logging.debug(f"\t{c_temp_file}")
     with open(c_temp_file, "w") as f:
@@ -273,6 +274,7 @@ def main():
 
     app_name = dict_json["app_name"]
     version = dict_json["version"]
+    identifier = dict_json["identifier"]
     icon = dict_json["icon"]
     packages = dict_json["packages"]
     ignore_packages = dict_json.get("ignore_packages", [])
@@ -377,7 +379,7 @@ def main():
     shutil.copy2(base_path.joinpath(icon), resources_folder)
 
     # Creating Info.plist file
-    create_app_info(app_folder, app_name, version, icon)
+    create_app_info(app_folder, identifier, app_name, version, icon)
 
     # Copying or extracting app files inside the package
     if package_type == "file":
@@ -437,7 +439,10 @@ def main():
                     macho.write(f)
 
     create_launcher(
-        app_folder, start_script_path, relative_to(PYTHON_EXEC, start_script_folder)
+        app_folder,
+        app_name,
+        start_script_path,
+        relative_to(PYTHON_EXEC, start_script_folder),
     )
 
     # Excluding files marked to exclusion by user
