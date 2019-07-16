@@ -1,6 +1,6 @@
 # Macnolo
 
-**Macnolo** is a tool to create Mac Application package (.app file) from python scripts including all its dependencies. Macnolo gets all dependencies from **brew**, **pip** The package definition are written in a json file.
+**Macnolo** is a tool to create Mac Application package (.app file) from python scripts including all its dependencies. Macnolo gets all dependencies from **brew**, **pip**. The package definition are written in a json file.
 
 ## JSON File
 
