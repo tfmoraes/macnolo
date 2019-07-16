@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import fnmatch
 import functools
 import glob
 import hashlib
@@ -195,6 +196,28 @@ def extract_files(filename, dest, skip_path=2):
     return extracted_files
 
 
+def exclude_files(resources_folder, patterns):
+    # Excluding files marked to exclusion by user inside the resource folder
+    logging.info("Removing files")
+    current_dir = resources_folder.cwd()
+    try:
+        os.chdir(resources_folder)
+        for file in pathlib.Path(".").glob("**/*"):
+            for pattern in patterns:
+                if fnmatch.fnmatchcase(str(file), pattern):
+                    logging.debug(f"\tremoving {file}")
+                    try:
+                        if file.is_dir():
+                            shutil.rmtree(str(file), ignore_errors=True)
+                        else:
+                            file.unlink()
+                    except FileNotFoundError:
+                        logging.debug("File already deleted")
+                    break
+    finally:
+        os.chdir(current_dir)
+
+
 def download_packages(
     packages: List[str], mac_version: str, ignore_packages: List[str]
 ):
@@ -291,7 +314,7 @@ def main():
     patches = dict_json["app_package"]["source"].get("patches", [])
     start_script = dict_json["app_package"]["start_script"]
     build_commands = dict_json["app_package"].get("build_commands", [])
-    exclude_files = dict_json.get("cleanup", [])
+    cleanup_patterns = dict_json.get("cleanup", [])
 
     # Creating folders
     app_folder = base_path.joinpath(app_name + ".app")
@@ -445,26 +468,8 @@ def main():
         relative_to(PYTHON_EXEC, start_script_folder),
     )
 
-    # Excluding files marked to exclusion by user
-    logging.info("Removing files")
-    for exclude_file in exclude_files:
-        try:
-            if glob.has_magic(exclude_file):
-                for ff in resources_folder.glob("**/{}".format(exclude_file)):
-                    logging.debug(f"\tremoving {ff}")
-                    if ff.is_dir():
-                        shutil.rmtree(str(ff), ignore_errors=True)
-                    else:
-                        ff.unlink()
-            else:
-                ff = resources_folder.joinpath(exclude_file)
-                logging.debug(f"\tremoving {ff}")
-                if ff.is_dir():
-                    shutil.rmtree(str(ff), ignore_errors=True)
-                else:
-                    ff.unlink()
-        except FileNotFoundError:
-            pass
+    if cleanup_patterns:
+        exclude_files(resources_folder, cleanup_patterns)
 
 
 if __name__ == "__main__":

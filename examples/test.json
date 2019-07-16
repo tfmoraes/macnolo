@@ -25,11 +25,11 @@
     "cleanup": [
         "*.c",
         "*.h",
-        "libs/include/",
-        "libs/share/",
-        "libs/libexec/",
-        "libs/mkspecs/",
-        "libs/translations/",
+        "libs/include",
+        "libs/share",
+        "libs/libexec",
+        "libs/mkspecs",
+        "libs/translations",
         "libs/IDLE 3.app",
         "libs/qml",
         "libs/plugins",
@@ -41,6 +41,10 @@
         "app/InVesalius/build",
         "app/InVesalius/contrib",
         "app/InVesalius/po",
-        "app/InVesalius/Dockerfile"
+        "app/InVesalius/Dockerfile",
+        "*/bin/*config*",
+        "*/bin/[!p]*",
+        "*/bin/p[!y]*",
+        "*/bin/py[!t]*"
     ]
 }
